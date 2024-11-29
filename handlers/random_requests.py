@@ -53,18 +53,8 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
                      "\n".join([f"{url}: {count} requests" for url, count in daily_requests.items()])
             )
 
-            # Распределяем запросы в течение суток с максимальным интервалом 2 часа
             for url, total_requests in daily_requests.items():
-                time_slots = []
-                current_time = 0  # Время с начала суток (в секундах)
-
-                for _ in range(total_requests):
-                    # Добавляем случайное время в пределах 2 часов (но не превышая 24 часа)
-                    next_time = current_time + random.randint(1, min(7200, 86400 - current_time))
-                    time_slots.append(next_time)
-                    current_time = next_time
-
-                for i, slot in enumerate(time_slots):
+                for i in range(total_requests):
                     if not stop_random_requests_flag:
                         await context.bot.send_message(
                             chat_id=update.effective_chat.id,
@@ -72,40 +62,32 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
                         )
                         return
 
-                    # Рассчитываем время ожидания до следующего слота
-                    now = datetime.now()
-                    midnight_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                    slot_time = midnight_today + timedelta(seconds=slot)
-                    pause_time = (slot_time - now).total_seconds()
-
-                    # Если текущий слот уже прошел, пропускаем паузу
-                    if pause_time < 0:
-                        continue
-
-                    minutes_to_next_request = pause_time // 60
+                    # Рассчитываем задержку между запросами (1–10 минут)
+                    delay = random.randint(60, 600)
+                    next_request_time = datetime.now() + timedelta(seconds=delay)
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        text=f"Next request for {url} will be executed at {slot_time.strftime('%H:%M:%S')} "
-                             f"(in {minutes_to_next_request:.0f} minutes)."
+                        text=f"Next request for {url} will be executed at {next_request_time.strftime('%H:%M:%S')} "
+                             f"(in {delay // 60} minutes)."
                     )
 
                     # Ждём до следующего запроса
                     elapsed_time = 0
-                    while elapsed_time < pause_time:
+                    while elapsed_time < delay:
                         if not stop_random_requests_flag:
                             await context.bot.send_message(
                                 chat_id=update.effective_chat.id,
                                 text="Random requests stopped by user."
                             )
                             return
-                        sleep_duration = min(10, pause_time - elapsed_time)
+                        sleep_duration = min(10, delay - elapsed_time)
                         await asyncio.sleep(sleep_duration)
                         elapsed_time += sleep_duration
 
                     # Выполнение запроса для текущей ссылки
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        text=f"Executing random request #{i + 1} for {url}..."
+                        text=f"Executing request #{i + 1} for {url} at {datetime.now().strftime('%H:%M:%S')}."
                     )
 
                     try:

@@ -19,15 +19,24 @@ async def run_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     stop_requests_flag = True  # Устанавливаем флаг перед запуском
 
     settings = load_settings()
-    url = settings["url"]
+    urls = settings.get("urls", [])  # Загружаем список ссылок
+    if not urls:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Список ссылок пуст. Добавьте ссылки через /add_url."
+        )
+        return
+
+    url = urls[0]  # Берём первую ссылку из списка
     request_count = settings["request_count"]
 
     # Настройки Selenium WebDriver
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    # Отключите "--headless" для тестирования, чтобы видеть процесс
+    options.add_argument("--headless")
 
     driver = None  # Инициализируем driver
 
@@ -44,7 +53,7 @@ async def run_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"Executing request #{i + 1}..."
+                text=f"Executing request #{i + 1} for URL: {url}..."
             )
 
             try:
@@ -54,57 +63,58 @@ async def run_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 if not stop_requests_flag:
                     break
 
-                input_name = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.ID, 'full-name'))
-                )
-                await asyncio.sleep(0.1)
-
-                if not stop_requests_flag:
+                # Обработка полей ввода и кнопок с улучшенной проверкой
+                try:
+                    input_name = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.ID, 'full-name'))
+                    )
+                    input_name.send_keys(generate_name_from_db())
+                except Exception as e:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"Error: 'Full Name' input field not found: {e}"
+                    )
                     break
 
-                input_phone = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.ID, 'phone'))
-                )
-                await asyncio.sleep(0.1)
-
-                if not stop_requests_flag:
+                try:
+                    input_phone = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.ID, 'phone'))
+                    )
+                    input_phone.send_keys(generate_phone_from_db())
+                except Exception as e:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"Error: 'Phone' input field not found: {e}"
+                    )
                     break
 
-                input_quantity = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.ID, 'qty'))
-                )
-                await asyncio.sleep(0.1)
-
-                if not stop_requests_flag:
+                try:
+                    input_quantity = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.ID, 'qty'))
+                    )
+                    Select(input_quantity).select_by_value(generate_quantity())
+                except Exception as e:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"Error: 'Quantity' dropdown not found: {e}"
+                    )
                     break
 
-                order_button = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, '//button[contains(text(), "Оформити замовлення")]'))
-                )
-                await asyncio.sleep(0.1)
-
-                if not stop_requests_flag:
+                try:
+                    order_button = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, '//button[contains(text(), "Оформити замовлення")]'))
+                    )
+                    order_button.click()
+                except Exception as e:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"Error: 'Order' button not clickable or not found: {e}"
+                    )
                     break
-
-                # Генерация данных
-                name = generate_name_from_db()
-                phone = generate_phone_from_db()
-                quantity = generate_quantity()
-                await asyncio.sleep(0.1)
-
-                # Проверяем флаг перед отправкой данных
-                if not stop_requests_flag:
-                    break
-
-                # Заполняем форму и отправляем
-                input_name.send_keys(name)
-                input_phone.send_keys(phone)
-                Select(input_quantity).select_by_value(quantity)
-                order_button.click()
 
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"Request sent: Name - {name}, Phone - {phone}, Quantity - {quantity}"
+                    text=f"Request #{i + 1} sent for URL: {url}"
                 )
 
                 # Короткая пауза между запросами (даём возможность обработать другие задачи)
@@ -121,7 +131,7 @@ async def run_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 else:
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        text=f"Error during request execution: {e}"
+                        text=f"Error during request execution for {url}: {e}"
                     )
                 break
 
