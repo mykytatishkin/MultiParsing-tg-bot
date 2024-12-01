@@ -16,7 +16,7 @@ current_task = None  # Переменная для хранения текуще
 
 
 async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Выполняет случайные запросы для каждой ссылки с учётом интервала запросов."""
+    """Выполняет запросы для каждой ссылки по очереди."""
     global stop_random_requests_flag
     stop_random_requests_flag = True  # Устанавливаем флаг перед запуском
 
@@ -43,99 +43,92 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         driver = webdriver.Chrome(options=options)
 
-        while stop_random_requests_flag:  # Бесконечный цикл выполнения
-            # Генерация количества запросов для каждой ссылки
-            daily_requests = {url: random.randint(min_requests, max_requests) for url in urls}
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"Starting a new day cycle at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.\n"
-                     f"Daily requests for each URL:\n" +
-                     "\n".join([f"{url}: {count} requests" for url, count in daily_requests.items()])
-            )
+        # Генерация количества запросов для каждой ссылки
+        daily_requests = {url: random.randint(min_requests, max_requests) for url in urls}
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"Starting requests at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.\n"
+                 f"Requests for each URL:\n" +
+                 "\n".join([f"{url}: {count} requests" for url, count in daily_requests.items()])
+        )
 
-            for url, total_requests in daily_requests.items():
-                for i in range(total_requests):
-                    if not stop_random_requests_flag:
-                        await context.bot.send_message(
-                            chat_id=update.effective_chat.id,
-                            text="Random requests stopped by user."
-                        )
-                        return
+        # Храним задержку для каждой ссылки
+        delays = {url: random.randint(60, 3600) for url in urls}
 
-                    # Рассчитываем задержку между запросами (1–10 минут)
-                    delay = random.randint(60, 600)
-                    next_request_time = datetime.now() + timedelta(seconds=delay)
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=f"Next request for {url} will be executed at {next_request_time.strftime('%H:%M:%S')} "
-                             f"(in {delay // 60} minutes)."
+        while any(daily_requests.values()) and stop_random_requests_flag:
+            for url in urls:
+                remaining_requests = daily_requests.get(url, 0)
+                if remaining_requests <= 0:
+                    continue
+
+                # Выполнение запроса
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"Executing request for {url}. Remaining requests: {remaining_requests - 1}"
+                )
+
+                try:
+                    driver.get(url)
+
+                    # Генерация и заполнение данных
+                    input_name = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.ID, 'full-name'))
+                    )
+                    input_phone = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.ID, 'phone'))
+                    )
+                    input_quantity = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.ID, 'qty'))
+                    )
+                    order_button = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, '//button[contains(text(), "Оформити замовлення")]'))
                     )
 
-                    # Ждём до следующего запроса
-                    elapsed_time = 0
-                    while elapsed_time < delay:
-                        if not stop_random_requests_flag:
-                            await context.bot.send_message(
-                                chat_id=update.effective_chat.id,
-                                text="Random requests stopped by user."
-                            )
-                            return
-                        sleep_duration = min(10, delay - elapsed_time)
-                        await asyncio.sleep(sleep_duration)
-                        elapsed_time += sleep_duration
+                    name = generate_name_from_db()
+                    phone = generate_phone_from_db()
+                    quantity = generate_quantity()
 
-                    # Выполнение запроса для текущей ссылки
+                    input_name.send_keys(name)
+                    input_phone.send_keys(phone)
+                    Select(input_quantity).select_by_value(quantity)
+                    order_button.click()
+
+                    # Уведомление о выполненном запросе
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        text=f"Executing request #{i + 1} for {url} at {datetime.now().strftime('%H:%M:%S')}."
+                        text=f"Request sent for {url}:\nName: {name}\nPhone: {phone}\nQuantity: {quantity}"
                     )
 
-                    try:
-                        driver.get(url)
+                except Exception as e:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"Error during request execution for {url}: {e}"
+                    )
 
-                        # Генерация и заполнение данных
-                        input_name = WebDriverWait(driver, 10).until(
-                            EC.presence_of_element_located((By.ID, 'full-name'))
-                        )
-                        input_phone = WebDriverWait(driver, 10).until(
-                            EC.presence_of_element_located((By.ID, 'phone'))
-                        )
-                        input_quantity = WebDriverWait(driver, 10).until(
-                            EC.presence_of_element_located((By.ID, 'qty'))
-                        )
-                        order_button = WebDriverWait(driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH, '//button[contains(text(), "Оформити замовлення")]'))
-                        )
+                # Обновляем количество оставшихся запросов
+                daily_requests[url] -= 1
 
-                        name = generate_name_from_db()
-                        phone = generate_phone_from_db()
-                        quantity = generate_quantity()
+                # Обновляем задержки
+                delays = {url: random.randint(60, 3600) for url in urls if daily_requests.get(url, 0) > 0}
 
-                        input_name.send_keys(name)
-                        input_phone.send_keys(phone)
-                        Select(input_quantity).select_by_value(quantity)
-                        order_button.click()
+                # Формируем сообщение с ожиданием
+                next_requests_info = "\n".join(
+                    [f"{next_url}: {delays[next_url] // 60} min {delays[next_url] % 60} sec"
+                     for next_url in delays]
+                )
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"Next requests delay:\n{next_requests_info}"
+                )
 
-                        await context.bot.send_message(
-                            chat_id=update.effective_chat.id,
-                            text=f"Request sent for {url}:\nName: {name}\nPhone: {phone}\nQuantity: {quantity}"
-                        )
+                # Задержка перед следующим запросом
+                if delays.get(url):
+                    await asyncio.sleep(delays[url])
 
-                    except Exception as e:
-                        await context.bot.send_message(
-                            chat_id=update.effective_chat.id,
-                            text=f"Error during request execution for {url}: {e}"
-                        )
-
-            # Ждём до следующего дня ровно в 00:00
-            now = datetime.now()
-            next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-            seconds_to_next_day = (next_midnight - now).total_seconds()
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="All requests for today completed. Waiting until 00:00 for the next cycle..."
-            )
-            await asyncio.sleep(seconds_to_next_day)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="All requests for today completed."
+        )
 
     finally:
         if driver:
