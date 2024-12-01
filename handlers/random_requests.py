@@ -10,12 +10,15 @@ from selenium import webdriver
 import random
 from datetime import datetime, timedelta
 
-# Глобальный флаг для управления выполнением запросов
+# Глобальный флаг и список задач для управления выполнением запросов
 stop_random_requests_flag = False
+tasks = []  # Список активных задач
 
 
 async def process_url(url, requests_count, update, context):
     """Асинхронно выполняет запросы для одной ссылки."""
+    global stop_random_requests_flag
+
     options = webdriver.ChromeOptions()
     options.add_argument("--headless")
     options.add_argument("--disable-gpu")
@@ -25,8 +28,12 @@ async def process_url(url, requests_count, update, context):
 
     try:
         for i in range(requests_count):
-            if not stop_random_requests_flag:
-                break
+            if not stop_random_requests_flag:  # Проверяем флаг остановки
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"Stopping requests for {url}. Remaining requests: {requests_count - i} will not be executed."
+                )
+                return
 
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -73,12 +80,29 @@ async def process_url(url, requests_count, update, context):
             # Задержка перед следующим запросом
             delay = random.randint(60, 3600)  # от 1 до 60 минут
             next_request_time = datetime.now() + timedelta(seconds=delay)
+
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=f"Next request for {url} will be executed at {next_request_time.strftime('%H:%M:%S')} "
                      f"(in {delay // 60} minutes and {delay % 60} seconds)."
             )
-            await asyncio.sleep(delay)
+
+            # Проверяем флаг остановки во время ожидания
+            for _ in range(delay):
+                if not stop_random_requests_flag:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"Stopping requests for {url}. Remaining requests: {requests_count - i - 1} will not be executed."
+                    )
+                    return
+                await asyncio.sleep(1)
+
+    except asyncio.CancelledError:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"Task for {url} has been forcibly stopped."
+        )
+        return
 
     finally:
         driver.quit()
@@ -86,8 +110,9 @@ async def process_url(url, requests_count, update, context):
 
 async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Запускает выполнение запросов для каждой ссылки в отдельной задаче."""
-    global stop_random_requests_flag
+    global stop_random_requests_flag, tasks
     stop_random_requests_flag = True  # Устанавливаем флаг перед запуском
+    tasks = []  # Сброс задач
 
     settings = load_settings()
     urls = settings["urls"]  # Загружаем список ссылок
@@ -117,7 +142,7 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
 
     # Дожидаемся завершения всех задач
-    await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks, return_exceptions=True)
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
@@ -127,8 +152,14 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def stop_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Останавливает выполнение случайных запросов."""
-    global stop_random_requests_flag
+    global stop_random_requests_flag, tasks
     stop_random_requests_flag = False  # Устанавливаем флаг остановки
+
+    # Отменяем все активные задачи
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="Random requests have been stopped."
@@ -137,7 +168,7 @@ async def stop_random_requests(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def handle_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик запуска случайных запросов."""
-    await run_random_requests(update, context)
+    asyncio.create_task(run_random_requests(update, context))
 
 
 def get_random_request_handlers():
