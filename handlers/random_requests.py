@@ -3,12 +3,9 @@ from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 from utils.settings import load_settings
 from utils.generator import generate_name_from_db, generate_phone_from_db, generate_quantity
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import Select, WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium import webdriver
 import random
 from datetime import datetime, timedelta
+from playwright.async_api import async_playwright
 
 # Глобальный флаг и список задач для управления выполнением запросов
 stop_random_requests_flag = False
@@ -19,103 +16,85 @@ async def process_url(url, url_number, requests_count, update, context, daily_re
     """Асинхронно выполняет запросы для одной ссылки с динамическим обновлением запросов и нумерацией."""
     global stop_random_requests_flag
 
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    driver = webdriver.Chrome(options=options)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context_browser = await browser.new_context()
+        page = await context_browser.new_page()
 
-    try:
-        for i in range(requests_count):
-            if not stop_random_requests_flag:  # Проверяем флаг остановки
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"Stopping requests for URL #{url_number} ({url}). Remaining requests: {requests_count - i} will not be executed."
-                )
-                return
-
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"Executing request for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1}"
-            )
-
-            try:
-                driver.get(url)
-
-                # Генерация и заполнение данных
-                input_name = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.ID, 'full-name'))
-                )
-                input_phone = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.ID, 'phone'))
-                )
-                input_quantity = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.ID, 'qty'))
-                )
-                order_button = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, '//button[contains(text(), "Оформити замовлення")]'))
-                )
-
-                name = generate_name_from_db()
-                phone = generate_phone_from_db()
-                quantity = generate_quantity()
-
-                input_name.send_keys(name)
-                input_phone.send_keys(phone)
-                Select(input_quantity).select_by_value(quantity)
-                order_button.click()
-
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"Request sent for URL #{url_number} ({url}):\nName: {name}\nPhone: {phone}\nQuantity: {quantity}"
-                )
-
-            except Exception as e:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"Error during request execution for URL #{url_number} ({url}): {e}"
-                )
-
-            # Задержка перед следующим запросом
-            delay = random.randint(60, 3600)  # от 1 до 60 минут
-            next_request_time = datetime.now() + timedelta(seconds=delay)
-
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"Next request for URL #{url_number} ({url}) will be executed at {next_request_time.strftime('%H:%M:%S')} "
-                     f"(in {delay // 60} minutes and {delay % 60} seconds)."
-            )
-
-            # Проверяем флаг остановки во время ожидания
-            for _ in range(delay):
-                if not stop_random_requests_flag:
+        try:
+            for i in range(requests_count):
+                if not stop_random_requests_flag:  # Проверяем флаг остановки
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        text=f"Stopping requests for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1} will not be executed."
+                        text=f"Stopping requests for URL #{url_number} ({url}). Remaining requests: {requests_count - i} will not be executed."
                     )
                     return
-                await asyncio.sleep(1)
 
-        # Если запросы для ссылки закончились, генерируем новый лимит
-        new_count = random.randint(1, 5)  # Подставьте актуальные лимиты
-        daily_requests[url] = new_count
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"All requests for URL #{url_number} ({url}) completed.\nGenerating new requests: {new_count} requests."
-        )
-        # Рекурсивно вызываем обработку с новым количеством запросов
-        await process_url(url, url_number, new_count, update, context, daily_requests)
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"Executing request for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1}"
+                )
 
-    except asyncio.CancelledError:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"Task for URL #{url_number} ({url}) has been forcibly stopped."
-        )
-        return
+                try:
+                    await page.goto(url)
 
-    finally:
-        driver.quit()
+                    # Генерация и заполнение данных
+                    await page.fill('#full-name', generate_name_from_db())
+                    await page.fill('#phone', generate_phone_from_db())
+                    quantity = generate_quantity()
+                    await page.select_option('#qty', quantity)
+                    await page.click('//button[contains(text(), "Оформити замовлення")]')
+
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"Request sent for URL #{url_number} ({url}):\nName: {generate_name_from_db()}\nPhone: {generate_phone_from_db()}\nQuantity: {quantity}"
+                    )
+
+                except Exception as e:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"Error during request execution for URL #{url_number} ({url}): {e}"
+                    )
+
+                # Задержка перед следующим запросом
+                delay = random.randint(60, 3600)  # от 1 до 60 минут
+                next_request_time = datetime.now() + timedelta(seconds=delay)
+
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"Next request for URL #{url_number} ({url}) will be executed at {next_request_time.strftime('%H:%M:%S')} "
+                         f"(in {delay // 60} minutes and {delay % 60} seconds)."
+                )
+
+                # Проверяем флаг остановки во время ожидания
+                for _ in range(delay):
+                    if not stop_random_requests_flag:
+                        await context.bot.send_message(
+                            chat_id=update.effective_chat.id,
+                            text=f"Stopping requests for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1} will not be executed."
+                        )
+                        return
+                    await asyncio.sleep(1)
+
+            # Если запросы для ссылки закончились, генерируем новый лимит
+            new_count = random.randint(1, 5)  # Подставьте актуальные лимиты
+            daily_requests[url] = new_count
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"All requests for URL #{url_number} ({url}) completed.\nGenerating new requests: {new_count} requests."
+            )
+            # Рекурсивно вызываем обработку с новым количеством запросов
+            await process_url(url, url_number, new_count, update, context, daily_requests)
+
+        except asyncio.CancelledError:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"Task for URL #{url_number} ({url}) has been forcibly stopped."
+            )
+            return
+
+        finally:
+            await browser.close()
 
 
 async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
