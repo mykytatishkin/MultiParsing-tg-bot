@@ -15,8 +15,8 @@ stop_random_requests_flag = False
 tasks = []  # Список активных задач
 
 
-async def process_url(url, requests_count, update, context):
-    """Асинхронно выполняет запросы для одной ссылки."""
+async def process_url(url, url_number, requests_count, update, context, daily_requests):
+    """Асинхронно выполняет запросы для одной ссылки с динамическим обновлением запросов и нумерацией."""
     global stop_random_requests_flag
 
     options = webdriver.ChromeOptions()
@@ -31,13 +31,13 @@ async def process_url(url, requests_count, update, context):
             if not stop_random_requests_flag:  # Проверяем флаг остановки
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"Stopping requests for {url}. Remaining requests: {requests_count - i} will not be executed."
+                    text=f"Stopping requests for URL #{url_number} ({url}). Remaining requests: {requests_count - i} will not be executed."
                 )
                 return
 
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"Executing request for {url}. Remaining requests: {requests_count - i - 1}"
+                text=f"Executing request for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1}"
             )
 
             try:
@@ -68,13 +68,13 @@ async def process_url(url, requests_count, update, context):
 
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"Request sent for {url}:\nName: {name}\nPhone: {phone}\nQuantity: {quantity}"
+                    text=f"Request sent for URL #{url_number} ({url}):\nName: {name}\nPhone: {phone}\nQuantity: {quantity}"
                 )
 
             except Exception as e:
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"Error during request execution for {url}: {e}"
+                    text=f"Error during request execution for URL #{url_number} ({url}): {e}"
                 )
 
             # Задержка перед следующим запросом
@@ -83,7 +83,7 @@ async def process_url(url, requests_count, update, context):
 
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"Next request for {url} will be executed at {next_request_time.strftime('%H:%M:%S')} "
+                text=f"Next request for URL #{url_number} ({url}) will be executed at {next_request_time.strftime('%H:%M:%S')} "
                      f"(in {delay // 60} minutes and {delay % 60} seconds)."
             )
 
@@ -92,15 +92,25 @@ async def process_url(url, requests_count, update, context):
                 if not stop_random_requests_flag:
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        text=f"Stopping requests for {url}. Remaining requests: {requests_count - i - 1} will not be executed."
+                        text=f"Stopping requests for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1} will not be executed."
                     )
                     return
                 await asyncio.sleep(1)
 
+        # Если запросы для ссылки закончились, генерируем новый лимит
+        new_count = random.randint(1, 5)  # Подставьте актуальные лимиты
+        daily_requests[url] = new_count
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"All requests for URL #{url_number} ({url}) completed.\nGenerating new requests: {new_count} requests."
+        )
+        # Рекурсивно вызываем обработку с новым количеством запросов
+        await process_url(url, url_number, new_count, update, context, daily_requests)
+
     except asyncio.CancelledError:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"Task for {url} has been forcibly stopped."
+            text=f"Task for URL #{url_number} ({url}) has been forcibly stopped."
         )
         return
 
@@ -132,13 +142,13 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
         chat_id=update.effective_chat.id,
         text=f"Starting requests at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.\n"
              f"Requests for each URL:\n" +
-             "\n".join([f"{url}: {count} requests" for url, count in daily_requests.items()])
+             "\n".join([f"#{i + 1}: {url}: {count} requests" for i, (url, count) in enumerate(daily_requests.items())])
     )
 
     # Создаем отдельную задачу для каждой ссылки
     tasks = [
-        asyncio.create_task(process_url(url, count, update, context))
-        for url, count in daily_requests.items()
+        asyncio.create_task(process_url(url, i + 1, count, update, context, daily_requests))
+        for i, (url, count) in enumerate(daily_requests.items())
     ]
 
     # Дожидаемся завершения всех задач
