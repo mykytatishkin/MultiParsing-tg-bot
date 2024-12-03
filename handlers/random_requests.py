@@ -57,7 +57,7 @@ async def process_url(url, url_number, requests_count, update, context, daily_re
                     )
 
                 # Задержка перед следующим запросом
-                delay = random.randint(60, 3600)  # от 1 до 60 минут
+                delay = random.randint(60, 3600)  #  от 1 до 60 минут
                 next_request_time = datetime.now() + timedelta(seconds=delay)
 
                 await context.bot.send_message(
