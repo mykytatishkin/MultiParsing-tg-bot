@@ -12,16 +12,36 @@ stop_random_requests_flag = False
 tasks = []  # Список активных задач
 
 
-async def process_url(url, url_number, requests_count, update, context, daily_requests):
-    """Асинхронно выполняет запросы для одной ссылки с динамическим обновлением запросов и нумерацией."""
+def generate_schedule(request_count):
+    """Генерирует расписание запросов с заданными пропорциями, начиная с текущего времени."""
+    now = datetime.now()
+    night_count = int(request_count * 0.3)  # 30% запросов ночью
+    day_count = request_count - night_count  # Остальные днем
+
+    night_intervals = [
+        now + timedelta(seconds=random.randint(0, 7 * 3600))  # Интервал 00:00–07:00
+        for _ in range(night_count)
+    ]
+    day_intervals = [
+        now + timedelta(seconds=random.randint(7 * 3600, 23 * 3600 + 59 * 60))  # Интервал 07:00–23:59
+        for _ in range(day_count)
+    ]
+
+    # Объединяем и сортируем временные интервалы
+    full_schedule = sorted(night_intervals + day_intervals)
+    return [time.strftime('%H:%M:%S') for time in full_schedule]
+
+
+async def process_url(url, url_number, requests_count, update, context):
+    """Асинхронно выполняет запросы для одной ссылки."""
     global stop_random_requests_flag
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context_browser = await browser.new_context()
-        page = await context_browser.new_page()
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+            context_browser = await browser.new_context()
+            page = await context_browser.new_page()
 
-        try:
             for i in range(requests_count):
                 if not stop_random_requests_flag:  # Проверяем флаг остановки
                     await context.bot.send_message(
@@ -30,70 +50,41 @@ async def process_url(url, url_number, requests_count, update, context, daily_re
                     )
                     return
 
+                # Выполнение запроса
+                await page.goto(url)
+                await page.fill('#full-name', generate_name_from_db())
+                await page.fill('#phone', generate_phone_from_db())
+                quantity = generate_quantity()
+                await page.select_option('#qty', quantity)
+                await page.click('//button[contains(text(), "Оформити замовлення")]')
+
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"Executing request for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1}"
+                    text=f"Request sent for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1}"
                 )
 
-                try:
-                    await page.goto(url)
-
-                    # Генерация и заполнение данных
-                    await page.fill('#full-name', generate_name_from_db())
-                    await page.fill('#phone', generate_phone_from_db())
-                    quantity = generate_quantity()
-                    await page.select_option('#qty', quantity)
-                    await page.click('//button[contains(text(), "Оформити замовлення")]')
-
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=f"Request sent for URL #{url_number} ({url}):\nName: {generate_name_from_db()}\nPhone: {generate_phone_from_db()}\nQuantity: {quantity}"
-                    )
-
-                except Exception as e:
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=f"Error during request execution for URL #{url_number} ({url}): {e}"
-                    )
-
                 # Задержка перед следующим запросом
-                delay = random.randint(60, 3600)  #  от 1 до 60 минут
+                delay = random.randint(60, 3600)
                 next_request_time = datetime.now() + timedelta(seconds=delay)
 
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"Next request for URL #{url_number} ({url}) will be executed at {next_request_time.strftime('%H:%M:%S')} "
-                         f"(in {delay // 60} minutes and {delay % 60} seconds)."
+                    text=f"Next request for URL #{url_number} ({url}) will be executed at {next_request_time.strftime('%H:%M:%S')}."
                 )
 
-                # Проверяем флаг остановки во время ожидания
+                # Ожидание с проверкой флага остановки
                 for _ in range(delay):
                     if not stop_random_requests_flag:
-                        await context.bot.send_message(
-                            chat_id=update.effective_chat.id,
-                            text=f"Stopping requests for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1} will not be executed."
-                        )
                         return
                     await asyncio.sleep(1)
 
-            # Если запросы для ссылки закончились, генерируем новый лимит
-            new_count = random.randint(1, 5)  # Подставьте актуальные лимиты
-            daily_requests[url] = new_count
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"All requests for URL #{url_number} ({url}) completed.\nGenerating new requests: {new_count} requests."
-            )
-            # Рекурсивно вызываем обработку с новым количеством запросов
-            await process_url(url, url_number, new_count, update, context, daily_requests)
-
-        except asyncio.CancelledError:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"Task for URL #{url_number} ({url}) has been forcibly stopped."
-            )
-            return
-
-        finally:
+    except Exception as e:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"Error during request execution for URL #{url_number} ({url}): {e}"
+        )
+    finally:
+        if 'browser' in locals() and browser:
             await browser.close()
 
 
@@ -104,7 +95,7 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
     tasks = []  # Сброс задач
 
     settings = load_settings()
-    urls = settings["urls"]  # Загружаем список ссылок
+    urls = settings["urls"]
     min_requests = settings["min_requests"]
     max_requests = settings["max_requests"]
 
@@ -115,22 +106,20 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
-    # Генерация количества запросов для каждой ссылки
     daily_requests = {url: random.randint(min_requests, max_requests) for url in urls}
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"Starting requests at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.\n"
-             f"Requests for each URL:\n" +
-             "\n".join([f"#{i + 1}: {url}: {count} requests" for i, (url, count) in enumerate(daily_requests.items())])
-    )
+    schedules = {url: generate_schedule(count) for url, count in daily_requests.items()}
 
-    # Создаем отдельную задачу для каждой ссылки
+    for i, (url, schedule) in enumerate(schedules.items()):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"Schedule of requests for URL #{i + 1} ({url}):\n" + "\n".join(schedule)
+        )
+
     tasks = [
-        asyncio.create_task(process_url(url, i + 1, count, update, context, daily_requests))
+        asyncio.create_task(process_url(url, i + 1, count, update, context))
         for i, (url, count) in enumerate(daily_requests.items())
     ]
 
-    # Дожидаемся завершения всех задач
     await asyncio.gather(*tasks, return_exceptions=True)
 
     await context.bot.send_message(
@@ -140,7 +129,7 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def stop_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Останавливает выполнение случайных запросов."""
+    """Останавливает выполнение запросов."""
     global stop_random_requests_flag, tasks
     stop_random_requests_flag = False  # Устанавливаем флаг остановки
 
@@ -149,20 +138,18 @@ async def stop_random_requests(update: Update, context: ContextTypes.DEFAULT_TYP
         if not task.done():
             task.cancel()
 
+    # Ждем завершения всех задач
+    await asyncio.gather(*tasks, return_exceptions=True)
+
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="Random requests have been stopped."
     )
 
 
-async def handle_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик запуска случайных запросов."""
-    asyncio.create_task(run_random_requests(update, context))
-
-
 def get_random_request_handlers():
-    """Возвращает список обработчиков для управления случайными запросами."""
+    """Возвращает список обработчиков для управления запросами."""
     return [
-        CommandHandler("random_requests", handle_random_requests),
+        CommandHandler("random_requests", run_random_requests),
         CommandHandler("stop_random_requests", stop_random_requests),
     ]
