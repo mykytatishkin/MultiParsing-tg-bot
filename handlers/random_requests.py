@@ -32,16 +32,28 @@ def generate_schedule(request_count):
     return [time.strftime('%H:%M:%S') for time in full_schedule]
 
 
-async def process_url(url, url_number, requests_count, update, context):
+async def async_delay(seconds):
+    """Асинхронная задержка с проверкой флага остановки."""
+    global stop_random_requests_flag
+    try:
+        for _ in range(seconds):
+            if not stop_random_requests_flag:
+                raise asyncio.CancelledError  # Прерываем выполнение, если флаг остановки активирован
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        raise  # Повторно поднимаем исключение для обработки в вызывающем коде
+
+
+async def process_url(url, url_number, requests_count, update, context, daily_requests):
     """Асинхронно выполняет запросы для одной ссылки."""
     global stop_random_requests_flag
 
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-            context_browser = await browser.new_context()
-            page = await context_browser.new_page()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        context_browser = await browser.new_context()
+        page = await context_browser.new_page()
 
+        try:
             for i in range(requests_count):
                 if not stop_random_requests_flag:  # Проверяем флаг остановки
                     await context.bot.send_message(
@@ -72,19 +84,17 @@ async def process_url(url, url_number, requests_count, update, context):
                     text=f"Next request for URL #{url_number} ({url}) will be executed at {next_request_time.strftime('%H:%M:%S')}."
                 )
 
-                # Ожидание с проверкой флага остановки
-                for _ in range(delay):
-                    if not stop_random_requests_flag:
-                        return
-                    await asyncio.sleep(1)
+                # Используем асинхронную задержку
+                await async_delay(delay)
 
-    except Exception as e:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"Error during request execution for URL #{url_number} ({url}): {e}"
-        )
-    finally:
-        if 'browser' in locals() and browser:
+        except asyncio.CancelledError:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"Task for URL #{url_number} ({url}) has been stopped."
+            )
+            return
+
+        finally:
             await browser.close()
 
 
@@ -116,7 +126,7 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
     tasks = [
-        asyncio.create_task(process_url(url, i + 1, count, update, context))
+        asyncio.create_task(process_url(url, i + 1, count, update, context, daily_requests))
         for i, (url, count) in enumerate(daily_requests.items())
     ]
 
@@ -137,9 +147,6 @@ async def stop_random_requests(update: Update, context: ContextTypes.DEFAULT_TYP
     for task in tasks:
         if not task.done():
             task.cancel()
-
-    # Ждем завершения всех задач
-    await asyncio.gather(*tasks, return_exceptions=True)
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
