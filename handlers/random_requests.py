@@ -7,27 +7,26 @@ import random
 from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 
-# Глобальный флаг и список задач для управления выполнением запросов
+# Глобальный флаг и список задач
 stop_random_requests_flag = False
 tasks = []  # Список активных задач
 
 
 def generate_schedule(request_count):
-    """Генерирует расписание запросов с заданными пропорциями, начиная с текущего времени."""
+    """Генерирует расписание запросов."""
     now = datetime.now()
-    night_count = int(request_count * 0.3)  # 30% запросов ночью
-    day_count = request_count - night_count  # Остальные днем
+    night_count = int(request_count * 0.3)
+    day_count = request_count - night_count
 
     night_intervals = [
-        now + timedelta(seconds=random.randint(0, 7 * 3600))  # Интервал 00:00–07:00
+        now + timedelta(seconds=random.randint(0, 7 * 3600))
         for _ in range(night_count)
     ]
     day_intervals = [
-        now + timedelta(seconds=random.randint(7 * 3600, 23 * 3600 + 59 * 60))  # Интервал 07:00–23:59
+        now + timedelta(seconds=random.randint(7 * 3600, 23 * 3600 + 59 * 60))
         for _ in range(day_count)
     ]
 
-    # Объединяем и сортируем временные интервалы
     full_schedule = sorted(night_intervals + day_intervals)
     return [time.strftime('%H:%M:%S') for time in full_schedule]
 
@@ -37,11 +36,11 @@ async def async_delay(seconds):
     global stop_random_requests_flag
     try:
         for _ in range(seconds):
-            if not stop_random_requests_flag:
-                raise asyncio.CancelledError  # Прерываем выполнение, если флаг остановки активирован
+            if stop_random_requests_flag:  # Если флаг установлен, прерываем
+                raise asyncio.CancelledError
             await asyncio.sleep(1)
     except asyncio.CancelledError:
-        raise  # Повторно поднимаем исключение для обработки в вызывающем коде
+        return  # Завершаем функцию
 
 
 async def process_url(url, url_number, requests_count, update, context, daily_requests):
@@ -55,12 +54,12 @@ async def process_url(url, url_number, requests_count, update, context, daily_re
 
         try:
             for i in range(requests_count):
-                if not stop_random_requests_flag:  # Проверяем флаг остановки
+                if stop_random_requests_flag:  # Проверяем флаг остановки
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
                         text=f"Stopping requests for URL #{url_number} ({url}). Remaining requests: {requests_count - i} will not be executed."
                     )
-                    return
+                    return  # Выходим из цикла
 
                 # Выполнение запроса
                 await page.goto(url)
@@ -99,10 +98,10 @@ async def process_url(url, url_number, requests_count, update, context, daily_re
 
 
 async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Запускает выполнение запросов для каждой ссылки в отдельной задаче."""
+    """Запускает выполнение запросов в фоне."""
     global stop_random_requests_flag, tasks
-    stop_random_requests_flag = True  # Устанавливаем флаг перед запуском
-    tasks = []  # Сброс задач
+    stop_random_requests_flag = False  # Разрешаем выполнение
+    tasks = []  # Очистка задач
 
     settings = load_settings()
     urls = settings["urls"]
@@ -125,28 +124,25 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
             text=f"Schedule of requests for URL #{i + 1} ({url}):\n" + "\n".join(schedule)
         )
 
+    # Запускаем процесс в фоне
+    loop = asyncio.get_running_loop()
     tasks = [
-        asyncio.create_task(process_url(url, i + 1, count, update, context, daily_requests))
+        loop.create_task(process_url(url, i + 1, count, update, context, daily_requests))
         for i, (url, count) in enumerate(daily_requests.items())
     ]
-
-    await asyncio.gather(*tasks, return_exceptions=True)
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="All requests for today completed."
-    )
 
 
 async def stop_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Останавливает выполнение запросов."""
     global stop_random_requests_flag, tasks
-    stop_random_requests_flag = False  # Устанавливаем флаг остановки
+    stop_random_requests_flag = True  # Останавливаем выполнение
 
     # Отменяем все активные задачи
     for task in tasks:
-        if not task.done():
-            task.cancel()
+        task.cancel()
+
+    # Дожидаемся завершения всех задач
+    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
@@ -155,7 +151,7 @@ async def stop_random_requests(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 def get_random_request_handlers():
-    """Возвращает список обработчиков для управления запросами."""
+    """Возвращает список обработчиков."""
     return [
         CommandHandler("random_requests", run_random_requests),
         CommandHandler("stop_random_requests", stop_random_requests),
