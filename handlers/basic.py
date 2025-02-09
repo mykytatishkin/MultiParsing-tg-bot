@@ -5,8 +5,8 @@ from utils.settings import load_settings
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправляет стартовое сообщение и отображает меню."""
     keyboard = [
-        ["/run", "/random_requests"],
-        ["/stop_requests", "/stop_random_requests"],
+        ["/random_requests"],
+        ["/stop_random_requests"],
         ["/set_min_requests", "/set_max_requests"],
         ["/set_min_quantity", "/set_max_quantity"],
         ["/set_request_count", "/show_settings"],

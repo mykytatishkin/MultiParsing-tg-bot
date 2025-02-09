@@ -2,7 +2,6 @@ from telegram.ext import Application
 
 from handlers.basic import get_basic_handlers
 from handlers.settings import get_settings_conversation_handler, get_url_management_handler
-from handlers.requests import get_request_handlers
 from handlers.random_requests import get_random_request_handlers
 from utils.settings import load_telegram_token
 
@@ -25,7 +24,6 @@ def main():
         application.add_handlers(get_basic_handlers())  # Базовые команды (/start, /menu)
         application.add_handler(get_settings_conversation_handler())  # Настройки
         application.add_handler(get_url_management_handler())  # Управление ссылками
-        application.add_handlers(get_request_handlers())  # Запросы
         application.add_handlers(get_random_request_handlers())  # Случайные запросы
     except Exception as e:
         print(f"Error while setting up the bot: {e}")

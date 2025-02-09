@@ -1,4 +1,5 @@
 import asyncio
+import pytz
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 from utils.settings import load_settings
@@ -8,57 +9,68 @@ from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 
 stop_random_requests_flag = False
+KYIV_TZ = pytz.timezone("Europe/Kiev")
 
 
 def generate_schedule(request_count):
-    now = datetime.now()
+    """Генерация расписания запросов начиная с текущего времени (по Киеву)."""
+    now_kyiv = datetime.now(KYIV_TZ)  # Текущее время в Киеве
+
     night_count = int(request_count * 0.3)
     day_count = request_count - night_count
 
     night_intervals = [
-        now + timedelta(seconds=random.randint(0, 7 * 3600))
+        now_kyiv + timedelta(seconds=random.randint(0, 7 * 3600))
         for _ in range(night_count)
     ]
     day_intervals = [
-        now + timedelta(seconds=random.randint(7 * 3600, 23 * 3600 + 59 * 60))
+        now_kyiv + timedelta(seconds=random.randint(7 * 3600, 23 * 3600 + 59 * 60))
         for _ in range(day_count)
     ]
 
     full_schedule = sorted(night_intervals + day_intervals)
-    return [time.strftime('%H:%M:%S') for time in full_schedule]
+    return full_schedule
 
 
-async def async_delay(seconds):
-    global stop_random_requests_flag
-    try:
-        for _ in range(seconds):
-            if stop_random_requests_flag:
-                raise asyncio.CancelledError
-            await asyncio.sleep(1)
-    except asyncio.CancelledError:
-        return
+async def async_wait_until(target_time):
+    """Функция ожидания точного времени запроса"""
+    while True:
+        now_kyiv = datetime.now(KYIV_TZ)
+        delay = (target_time - now_kyiv).total_seconds()
+        if delay <= 0:
+            break  # Если уже наступило время — отправляем запрос
+        await asyncio.sleep(min(60, delay))  # Ждать максимум 60 секунд за раз
 
 
 async def process_url(url, url_number, update, context, min_requests, max_requests):
-    global stop_random_requests_flag
-
+    """Обработчик запросов к URL"""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
         context_browser = await browser.new_context()
         page = await context_browser.new_page()
 
         try:
-            while not stop_random_requests_flag:
+            while True:
                 requests_count = random.randint(min_requests, max_requests)
+                schedule = generate_schedule(requests_count)  # Генерация расписания
+
+                # Форматируем расписание в строку
+                schedule_str = "\n".join(time.strftime("%H:%M:%S") for time in schedule)
+
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"New cycle for URL #{url_number} ({url}). {requests_count} requests will be made."
+                    text=f"Schedule of requests for URL #{url_number} (Kyiv Time):\n{schedule_str}"
                 )
 
-                for i in range(requests_count):
-                    if stop_random_requests_flag:
-                        return
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"Starting requests for URL #{url_number} ({url}). {requests_count} requests will be sent at scheduled times."
+                )
 
+                for i, request_time in enumerate(schedule):
+                    await async_wait_until(request_time)
+
+                    # Выполнение запроса
                     await page.goto(url)
                     await page.fill('#full-name', generate_name_from_db())
                     await page.fill('#phone', generate_phone_from_db())
@@ -68,26 +80,17 @@ async def process_url(url, url_number, update, context, min_requests, max_reques
 
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        text=f"Request sent for URL #{url_number} ({url}). Remaining requests: {requests_count - i - 1}"
+                        text=f"Request {i + 1}/{requests_count} sent for URL #{url_number} ({url})."
                     )
 
-                    delay = random.randint(60, 3600)
-                    next_request_time = datetime.now() + timedelta(seconds=delay)
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=f"Next request for URL #{url_number} ({url}) at {next_request_time.strftime('%H:%M:%S')}"
-                    )
-
-                    await async_delay(delay)
-        except asyncio.CancelledError:
-            return
         finally:
             await browser.close()
 
 
 async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Запуск отправки случайных запросов"""
     global stop_random_requests_flag
-    stop_random_requests_flag = False
+    stop_random_requests_flag = False  # Очищаем флаг при новом запуске
 
     settings = load_settings()
     urls = settings["urls"]
@@ -97,7 +100,7 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not urls:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="Список ссылок пуст. Добавьте ссылки через /add_url."
+            text="The list of URLs is empty. Add links using /add_url."
         )
         return
 
@@ -107,12 +110,13 @@ async def run_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def stop_random_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда для остановки работы"""
     global stop_random_requests_flag
     stop_random_requests_flag = True
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="Random requests have been stopped."
+        text="Stopping requests will not cancel ongoing ones, but no new cycles will start."
     )
 
 
