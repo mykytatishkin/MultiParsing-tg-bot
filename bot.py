@@ -1,21 +1,24 @@
-import os
-import asyncio
 from telegram.ext import Application
+
 from handlers.basic import get_basic_handlers
 from handlers.settings import get_settings_conversation_handler, get_url_management_handler
 from handlers.random_requests import get_random_request_handlers
 from utils.settings import load_telegram_token
 
-# Получаем токен бота
-TOKEN = load_telegram_token()
-
-# Получаем URL хостинга (Render автоматически присваивает `RENDER_EXTERNAL_URL`)
-WEBHOOK_URL = f"{os.getenv('RENDER_EXTERNAL_URL')}/webhook"
-
 def main():
     try:
+        # Загружаем токен Telegram
+        token = load_telegram_token()
+    except FileNotFoundError:
+        print("Error: 'settings.json' file not found. Make sure the file exists in the expected location.")
+        return
+    except KeyError:
+        print("Error: Telegram bot token not found in 'settings.json'. Please check your configuration.")
+        return
+
+    try:
         # Создаем экземпляр приложения
-        application = Application.builder().token(TOKEN).build()
+        application = Application.builder().token(token).build()
 
         # Добавляем обработчики
         application.add_handlers(get_basic_handlers())  # Базовые команды (/start, /menu)
@@ -26,19 +29,11 @@ def main():
         print(f"Error while setting up the bot: {e}")
         return
 
-    print(f"Starting bot with Webhook at {WEBHOOK_URL}...")
+    print("Bot is running... Press Ctrl+C to stop.")
 
-    # Устанавливаем Webhook
-    async def set_webhook():
-        await application.bot.set_webhook(WEBHOOK_URL)
-
+    # Запускаем бота
     try:
-        asyncio.run(set_webhook())  # Устанавливаем вебхук
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.getenv("PORT", 8000)),  # Render использует переменную PORT
-            webhook_url=WEBHOOK_URL
-        )
+        application.run_polling()
     except Exception as e:
         print(f"Error while running the bot: {e}")
 
