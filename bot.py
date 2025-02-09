@@ -33,7 +33,7 @@ def main():
 
     # Запускаем бота
     try:
-        application.run_polling()
+        application.run_polling(drop_pending_updates=True)
     except Exception as e:
         print(f"Error while running the bot: {e}")
 
