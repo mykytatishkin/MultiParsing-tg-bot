@@ -1,6 +1,8 @@
 from telegram import Update
 from telegram.ext import CommandHandler, MessageHandler, filters, ConversationHandler, ContextTypes
 from utils.settings import load_settings, save_settings
+from utils.logger import logger, bot_logger
+from utils.email_notifier import email_notifier
 
 # Определяем состояния
 NEW_VALUE = 0
@@ -10,22 +12,48 @@ ADDING_URLS = 2
 # ==== Настройка числовых значений ====
 async def start_setting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начинает процесс установки настройки."""
-    command = update.message.text
-    key_map = {
-        "/set_min_requests": "min_requests",
-        "/set_max_requests": "max_requests",
-        "/set_min_quantity": "min_quantity",
-        "/set_max_quantity": "max_quantity",
-    }
-    key = key_map.get(command)
+    try:
+        user_id = update.effective_user.id
+        username = update.effective_user.username or "Unknown"
+        command = update.message.text
+        
+        logger.info(f"User {username} (ID: {user_id}) started setting: {command}")
+        bot_logger.log_user_action(user_id, username, "start_setting", f"Command: {command}")
+        
+        key_map = {
+            "/set_min_requests": "min_requests",
+            "/set_max_requests": "max_requests",
+            "/set_min_quantity": "min_quantity",
+            "/set_max_quantity": "max_quantity",
+        }
+        key = key_map.get(command)
 
-    if not key:
-        await update.message.reply_text("Команда не распознана.")
+        if not key:
+            await update.message.reply_text("Команда не распознана.")
+            logger.warning(f"Unknown setting command from user {username} (ID: {user_id}): {command}")
+            return ConversationHandler.END
+
+        context.user_data["setting_key"] = key
+        await update.message.reply_text("Введите новое значение (только число):")
+        logger.info(f"Setting prompt sent to user {username} (ID: {user_id}) for key: {key}")
+        return NEW_VALUE
+        
+    except Exception as e:
+        user_id = update.effective_user.id if update.effective_user else "Unknown"
+        username = update.effective_user.username if update.effective_user else "Unknown"
+        
+        logger.log_error(e, f"Error in start_setting for user {username} (ID: {user_id})")
+        email_notifier.send_error_notification(
+            e, 
+            f"Error in start_setting for user {username} (ID: {user_id})",
+            {"user_id": user_id, "username": username, "command": "start_setting"}
+        )
+        
+        try:
+            await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
+        except Exception:
+            pass
         return ConversationHandler.END
-
-    context.user_data["setting_key"] = key
-    await update.message.reply_text("Введите новое значение (только число):")
-    return NEW_VALUE
 
 
 async def set_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

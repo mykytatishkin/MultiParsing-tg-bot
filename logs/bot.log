@@ -1,0 +1,19 @@
+2025-10-02 18:51:46 - MultiParsingBot - INFO - main:30 - Starting MultiParsing Bot...
+2025-10-02 18:51:46 - MultiParsingBot - INFO - log_bot_action:107 - Bot action: Bot startup initiated
+2025-10-02 18:51:46 - MultiParsingBot - INFO - main:36 - Telegram token loaded successfully
+2025-10-02 18:51:46 - MultiParsingBot - INFO - main:56 - Telegram application created successfully
+2025-10-02 18:51:46 - MultiParsingBot - INFO - main:67 - All handlers added successfully
+2025-10-02 18:51:46 - MultiParsingBot - INFO - log_bot_action:107 - Bot action: Bot handlers configured
+2025-10-02 18:51:46 - MultiParsingBot - INFO - main:76 - Bot is running... Press Ctrl+C to stop.
+2025-10-02 18:51:46 - MultiParsingBot - INFO - log_bot_action:107 - Bot action: Bot started successfully
+2025-10-02 18:52:01 - MultiParsingBot - INFO - start:13 - User mykytatishkin (ID: 876386326) started the bot
+2025-10-02 18:52:01 - MultiParsingBot - INFO - log_user_action:94 - User mykytatishkin (ID: 876386326) performed action: start - Details: Bot started
+2025-10-02 18:52:01 - MultiParsingBot - INFO - start:31 - Start menu sent to user mykytatishkin (ID: 876386326)
+2025-10-02 18:52:08 - MultiParsingBot - INFO - run_random_requests:153 - User mykytatishkin (ID: 876386326) started random requests
+2025-10-02 18:52:08 - MultiParsingBot - INFO - log_user_action:94 - User mykytatishkin (ID: 876386326) performed action: run_random_requests - Details: Random requests started
+2025-10-02 18:52:08 - MultiParsingBot - INFO - run_random_requests:172 - Starting random requests for 2 URLs for user mykytatishkin (ID: 876386326)
+2025-10-02 18:52:08 - MultiParsingBot - INFO - log_bot_action:107 - Bot action: Random requests started - Details: URLs: 2, User: mykytatishkin
+2025-10-02 18:52:08 - MultiParsingBot - INFO - process_url:52 - Starting URL processing for user mykytatishkin (ID: 876386326), URL #1: https://tasttt.shopiforge.com/product/29480-kamera-videosposterezhennya
+2025-10-02 18:52:08 - MultiParsingBot - INFO - process_url:52 - Starting URL processing for user mykytatishkin (ID: 876386326), URL #2: https://mikoss.com.ua/product/29585-antivibratsiyni-pidstavki
+2025-10-02 18:52:11 - MultiParsingBot - INFO - process_url:81 - Generated schedule for URL #2: 63 requests for user mykytatishkin (ID: 876386326)
+2025-10-02 18:52:11 - MultiParsingBot - INFO - process_url:81 - Generated schedule for URL #1: 34 requests for user mykytatishkin (ID: 876386326)
