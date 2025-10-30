@@ -25,10 +25,42 @@ def generate_schedule(request_count):
         now_kyiv + timedelta(seconds=random.randint(0, 7 * 3600))
         for _ in range(night_count)
     ]
-    day_intervals = [
-        now_kyiv + timedelta(seconds=random.randint(7 * 3600, 23 * 3600 + 59 * 60))
-        for _ in range(day_count)
-    ]
+    # Дневные заказы: рандомная разница между запросами от 1 минуты до 2 часов
+    # Сохраняем базовый подход разбиения на ночь/день, но генерируем дневные времена последовательно
+    # так, чтобы интервал между соседними запросами был в диапазоне [1 мин, 2 часа].
+    # Окно дня ограничим текущими сутками с 07:00 до 23:59:59 по Киеву.
+    today_kyiv = now_kyiv.astimezone(KYIV_TZ).date()
+    day_window_start = datetime(
+        today_kyiv.year,
+        today_kyiv.month,
+        today_kyiv.day,
+        7,
+        0,
+        0,
+        tzinfo=KYIV_TZ,
+    )
+    day_window_end = datetime(
+        today_kyiv.year,
+        today_kyiv.month,
+        today_kyiv.day,
+        23,
+        59,
+        59,
+        tzinfo=KYIV_TZ,
+    )
+
+    # Начинать дневные интервалы с текущего момента (если он уже после 07:00), иначе с 07:00
+    current_day_time = max(now_kyiv, day_window_start)
+    day_intervals = []
+    for _ in range(day_count):
+        # Добавляем случайную паузу 1 минута ... 2 часа
+        increment_seconds = random.randint(60, 2 * 3600)
+        candidate_time = current_day_time + timedelta(seconds=increment_seconds)
+        # Не выходим за рамки текущих суток
+        if candidate_time > day_window_end:
+            candidate_time = day_window_end
+        day_intervals.append(candidate_time)
+        current_day_time = candidate_time
 
     full_schedule = sorted(night_intervals + day_intervals)
     return full_schedule
